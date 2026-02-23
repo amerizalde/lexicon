@@ -1,0 +1,56 @@
+name: Run thepopebot Job
+
+on:
+  create:
+
+jobs:
+  run-agent:
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
+    if: github.ref_type == 'branch' && startsWith(github.ref_name, 'job/')
+    permissions:
+      contents: write
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          sparse-checkout: package-lock.json
+          sparse-checkout-cone-mode: false
+
+      - name: Get thepopebot version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package-lock.json').packages['node_modules/thepopebot']?.version || 'latest'")
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        if: startsWith(vars.JOB_IMAGE_URL, 'ghcr.io/')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run thepopebot Agent
+        env:
+          JOB_IMAGE_URL: ${{ vars.JOB_IMAGE_URL }}
+          THEPOPEBOT_VERSION: ${{ steps.version.outputs.tag }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+        run: |
+          if [ -n "$JOB_IMAGE_URL" ]; then
+            IMAGE="${JOB_IMAGE_URL}:latest"
+          else
+            IMAGE="stephengpope/thepopebot:job-${THEPOPEBOT_VERSION}"
+          fi
+          echo "Using image: $IMAGE"
+          docker run --rm \
+            -e REPO_URL="${{ github.server_url }}/${{ github.repository }}.git" \
+            -e BRANCH="${{ github.ref_name }}" \
+            -e SECRETS='${{ secrets.SECRETS }}' \
+            -e LLM_SECRETS='${{ secrets.LLM_SECRETS }}' \
+            -e LLM_MODEL="${LLM_MODEL}" \
+            -e LLM_PROVIDER="${LLM_PROVIDER}" \
+            "$IMAGE"
